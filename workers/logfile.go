@@ -51,6 +51,8 @@ type LogFile struct {
 	writerPlain                            *bufio.Writer
 	writerPcap                             *pcapgo.Writer
 	writerDnstap                           *framestream.Encoder
+	rotationTimer                          *time.Timer
+	rotationInterval                       time.Duration
 	fileFd                                 *os.File
 	fileSize                               int64
 	fileDir, fileName, fileExt, filePrefix string
@@ -316,6 +318,10 @@ func (w *LogFile) FlushWriters() {
 }
 
 func (w *LogFile) RotateFile() error {
+	// reset rotation timer
+	if w.rotationInterval > 0 {
+		w.rotationTimer.Reset(w.rotationInterval)
+	}
 	// close writer and existing file
 	w.FlushWriters()
 
@@ -378,9 +384,9 @@ func (w *LogFile) WriteToPcap(dm dnsutils.DNSMessage, pkt []gopacket.Serializabl
 		layer.SerializeTo(buf, opts)
 	}
 
-	// rotate pcap file ?
 	bufSize := len(buf.Bytes())
 
+	// rotate pcap file ?
 	if (w.fileSize + int64(bufSize)) > w.GetMaxSize() {
 		if err := w.RotateFile(); err != nil {
 			w.LogError("failed to rotate file: %s", err)
@@ -555,6 +561,13 @@ func (w *LogFile) StartLogging() {
 	maxBatchSize := w.config.Loggers.LogFile.MaxBatchSize
 	accumulatedBatchSize := 0 // Current batch size
 
+	rotationInterval := w.GetConfig().Loggers.LogFile.RotationInterval
+	w.rotationInterval = time.Duration(rotationInterval) * time.Second
+	w.rotationTimer = time.NewTimer(w.rotationInterval)
+	if rotationInterval == 0 {
+		w.rotationTimer.Stop()
+	}
+
 	for {
 		select {
 		case <-w.OnLoggerStopped():
@@ -562,8 +575,9 @@ func (w *LogFile) StartLogging() {
 			close(w.compressQueue)
 			close(w.commandQueue)
 
-			// stop timer
+			// stop timers
 			flushTimer.Stop()
+			w.rotationTimer.Stop()
 
 			// Force write remaining batch data
 			if accumulatedBatchSize > 0 {
@@ -670,6 +684,10 @@ func (w *LogFile) StartLogging() {
 			buffer.Reset()
 			flushTimer.Reset(flushInterval)
 
+		case <-w.rotationTimer.C:
+			if err := w.RotateFile(); err != nil {
+				w.LogError("failed to rotate file: %s", err)
+			}
 		}
 	}
 }
