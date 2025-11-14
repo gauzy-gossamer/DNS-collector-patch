@@ -206,7 +206,6 @@ func TestRotation(t *testing.T) {
 	wg := sync.WaitGroup{}
 
 	for _, testCase := range tests {
-		timer := time.NewTimer(1100 * time.Millisecond)
 		wg.Add(1)
 		t.Run(testCase.test, func(t *testing.T) {
 			go func() {
@@ -215,6 +214,7 @@ func TestRotation(t *testing.T) {
 				config.Loggers.LogFile.Mode = pkgconfig.ModeFlatJSON
 				config.Loggers.LogFile.MaxSize = testCase.maxSize
 				config.Loggers.LogFile.RotationInterval = testCase.rotationInterval
+				config.Loggers.LogFile.ChannelBufferSize = 1
 
 				w := NewLogFile(config, logger.New(false), "testrotation")
 
@@ -223,9 +223,9 @@ func TestRotation(t *testing.T) {
 				for i := 0; i < testCase.queries; i++ {
 					w.GetInputChannel() <- dnsutils.GetFakeDNSMessage()
 				}
+				time.Sleep(1100 * time.Millisecond)
 
-				<-timer.C
-				w.FlushWriters()
+				w.Stop()
 				wg.Done()
 			}()
 		})
@@ -241,7 +241,7 @@ func TestRotation(t *testing.T) {
 
 	for _, testCase := range tests {
 		if testCase.expectedFiles != len(logFiles[testCase.test]) {
-			t.Error("number of rotation files does not match")
+			t.Error("number of rotation files does not match", testCase.test)
 		}
 	}
 }

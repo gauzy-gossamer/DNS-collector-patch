@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/gzip"
@@ -60,6 +61,7 @@ type LogFile struct {
 	jinjaFormat                            string
 	compressQueue                          chan string
 	commandQueue                           chan string
+	queueWg                                sync.WaitGroup
 }
 
 func NewLogFile(config *pkgconfig.Config, logger *logger.Logger, name string) *LogFile {
@@ -281,6 +283,7 @@ func (w *LogFile) compressFile(filename string) {
 	// run post command on compressed file ?
 	if len(w.config.Loggers.LogFile.PostRotateCommand) > 0 {
 		go func() {
+			w.queueWg.Add(1)
 			w.commandQueue <- dstFile
 		}()
 	}
@@ -349,10 +352,12 @@ func (w *LogFile) RotateFile() error {
 	// post rotate command?
 	if w.config.Loggers.LogFile.Compress {
 		go func() {
+			w.queueWg.Add(1)
 			w.compressQueue <- bfpath
 		}()
 	} else {
 		go func() {
+			w.queueWg.Add(1)
 			w.commandQueue <- bfpath
 		}()
 	}
@@ -477,12 +482,14 @@ func (w *LogFile) initializeCompressionQueue() {
 func (w *LogFile) startCompressor() {
 	for filename := range w.compressQueue {
 		w.compressFile(filename)
+		w.queueWg.Done()
 	}
 }
 
 func (w *LogFile) startCommandProcessor() {
 	for filename := range w.commandQueue {
 		w.postRotateCommand(filename)
+		w.queueWg.Done()
 	}
 }
 
@@ -571,10 +578,6 @@ func (w *LogFile) StartLogging() {
 	for {
 		select {
 		case <-w.OnLoggerStopped():
-			// close channels
-			close(w.compressQueue)
-			close(w.commandQueue)
-
 			// stop timers
 			flushTimer.Stop()
 			w.rotationTimer.Stop()
@@ -593,6 +596,13 @@ func (w *LogFile) StartLogging() {
 				w.writerDnstap.Close()
 			}
 			w.fileFd.Close()
+
+			/* wait until queues are processed */
+			w.queueWg.Wait()
+
+			// close channels
+			close(w.compressQueue)
+			close(w.commandQueue)
 
 			return
 
