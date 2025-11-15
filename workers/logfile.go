@@ -282,8 +282,8 @@ func (w *LogFile) compressFile(filename string) {
 
 	// run post command on compressed file ?
 	if len(w.config.Loggers.LogFile.PostRotateCommand) > 0 {
+		w.queueWg.Add(1)
 		go func() {
-			w.queueWg.Add(1)
 			w.commandQueue <- dstFile
 		}()
 	}
@@ -351,13 +351,13 @@ func (w *LogFile) RotateFile() error {
 
 	// post rotate command?
 	if w.config.Loggers.LogFile.Compress {
+		w.queueWg.Add(1)
 		go func() {
-			w.queueWg.Add(1)
 			w.compressQueue <- bfpath
 		}()
 	} else {
+		w.queueWg.Add(1)
 		go func() {
-			w.queueWg.Add(1)
 			w.commandQueue <- bfpath
 		}()
 	}
